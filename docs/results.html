@@ -298,7 +298,7 @@ details[open] summary { border-bottom: 1px solid var(--line); }
     <dl class="labels">
       <dt>Backend 직접</dt><dd>Gateway 없이 Backend를 직접 호출. 비교 기준선</dd>
       <dt>MVC 기본</dt><dd>Gateway MVC 기본값. JDK HTTP 클라이언트, Tomcat 플랫폼 스레드 최대 200개</dd>
-      <dt>MVC tuned</dt><dd>Jetty HTTP 클라이언트 + read-timeout 10분 + Jetty 커넥션 풀 2048 + 가상 스레드 (<code>application-tuned.yml</code>)</dd>
+      <dt>MVC tuned</dt><dd>Jetty HTTP 클라이언트 + read-timeout 10분 + Jetty 커넥션 풀 2048 + 가상 스레드 (<code>application-tuned.yml</code>). 이후 Docker 재측정에서 accept-count 1000을 추가했습니다(<a href="#docker">아래</a>)</dd>
       <dt>WebFlux</dt><dd>Gateway WebFlux 기본값 + connect-timeout 2초, response-timeout 10초</dd>
     </dl>
   </section>
@@ -396,6 +396,7 @@ details[open] summary { border-bottom: 1px solid var(--line); }
           <tr><td>MVC + Jetty, 플랫폼 스레드</td><td class="wrap fail-text">11번</td><td class="wrap">스레드 200개 상한은 그대로입니다</td></tr>
           <tr><td>MVC + 가상 스레드만 (JDK 클라이언트 유지)</td><td class="wrap fail-text">7번</td><td class="wrap">스레드 문제만 풀리고 drain 문제는 남습니다</td></tr>
           <tr><td>MVC + <code>simple</code> 클라이언트</td><td class="wrap fail-text">7번</td><td class="wrap"><code>simple</code>도 닫을 때 drain합니다</td></tr>
+          <tr><td>MVC tuned인데 <code>server.tomcat.accept-count</code> 기본값(100)</td><td class="wrap fail-text">12번: 500개가 한꺼번에 연결하면 일부가 1초 늦음</td><td class="wrap">연결 대기열이 넘쳐 버려진 SYN이 1초 뒤 재전송됩니다 (Docker 재측정에서 발견)</td></tr>
         </tbody>
       </table>
     </div>
@@ -415,6 +416,7 @@ details[open] summary { border-bottom: 1px solid var(--line); }
       <li><div>Jetty <code>maxConnectionsPerDestination</code>을 목표 동시 스트림 수 이상으로 설정합니다(기본 64). 이 저장소에서는 <code>poc.jetty-client.max-connections-per-destination</code>입니다.</div></li>
       <li><div><code>spring.threads.virtual.enabled=true</code>, 또는 <code>server.tomcat.threads.max</code>를 목표 동시 스트림 수 이상으로 설정합니다. 11·12번 해결.</div></li>
       <li><div>클라이언트는 <code>done</code> 이벤트로 정상 완료를 판정합니다. 9번 보완.</div></li>
+      <li><div><code>server.tomcat.accept-count</code>를 동시에 몰릴 수 있는 연결 수 이상으로 설정합니다(기본 100, OS <code>somaxconn</code> 이하). Docker 재측정에서 발견했습니다.</div></li>
     </ol>
     <h3>WebFlux 전환을 다시 검토할 조건</h3>
     <ul>
@@ -422,6 +424,30 @@ details[open] summary { border-bottom: 1px solid var(--line); }
       <li>9번(스트림 중간 오류를 연결 오류로 구분)이 반드시 필요할 때.</li>
       <li>Jetty 클라이언트를 쓸 수 없는 제약이 생겼는데, Spring 업그레이드로 JDK 클라이언트의 drain 동작이 바뀌지 않았을 때. 저장소의 <code>GatewayMvcJdkClientTest</code>가 현재 동작을 고정하고 있어서, 동작이 바뀌면 이 테스트가 실패합니다.</li>
     </ul>
+  </section>
+
+  <section id="docker" aria-labelledby="docker-h">
+    <h2 id="docker-h">docker compose 재측정</h2>
+    <p class="note"><code>docker compose up --build</code> 후 화면의 "전체 실행"으로 같은 16개 시나리오와 설정 함정 6개를 k6(xk6-sse)로 다시 측정했습니다. Docker Desktop VM(8 CPU, 16 GB) 안에서 컨테이너 13개를 함께 띄운 환경입니다. 판정 결과는 호스트 측정과 같습니다(실행 <code>20261027-092557-twb</code>, 674초).</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>구성</th><th>성공</th><th>실패</th><th>실패한 시나리오</th></tr></thead>
+        <tbody>
+          <tr><td>MVC 기본</td><td class="num">12</td><td class="num hl-bad">4</td><td class="wrap">7 사용자 중단, 9 스트림 중간 오류, 11 500개 동시, 12 500개 동시 × 20초</td></tr>
+          <tr><td>MVC tuned</td><td class="num">15</td><td class="num hl-bad">1</td><td class="wrap">9 스트림 중간 오류</td></tr>
+          <tr><td>WebFlux</td><td class="num">15</td><td class="num hl-bad">1</td><td class="wrap">6 첫 토큰 지연 (504)</td></tr>
+          <tr><td>설정 함정 6개</td><td class="num">—</td><td class="num">6/6</td><td class="wrap">모두 예상대로 실패</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">MVC 기본의 성공 개수가 호스트 판정표(11)보다 하나 많습니다. 호스트에서 "불안정"이던 13번이 3회 모두 100%였기 때문입니다.</p>
+    <h3>재측정하면서 새로 확인한 것</h3>
+    <ol class="steps">
+      <li><div><strong>Tomcat 연결 대기열 넘침.</strong> 첫 실행에서 tuned가 12번에 실패했습니다(첫 토큰 p95 1.26초). 500건 중 26건만 약 1.26초에 몰려 있었고, <code>/proc/net/netstat</code>의 <code>ListenOverflows</code>가 MVC 컨테이너에서만 늘었습니다(tuned 172, 기본 62, WebFlux·Backend 0). Tomcat <code>accept-count</code> 기본값 100이 넘쳐서 버려진 SYN이 1초 뒤 재전송된 것입니다. tuned에 <code>server.tomcat.accept-count: 1000</code>을 추가하자 넘침이 0이 됐고 12번도 통과했습니다. 기본값 구성은 재시작 직후에는 매번 실패했지만, JVM이 데워진 뒤에는 통과하기도 해서 재현이 일정하지 않습니다. 그래서 자동 판정에는 넣지 않았습니다.</div></li>
+      <li><div><strong>동시 연결 판정에 "최대 1초 이내"를 추가했습니다.</strong> p95만 보면 5% 미만의 요청이 1초 넘게 늦는 문제를 놓칩니다.</div></li>
+      <li><div><strong>콜드 스타트 보정.</strong> 방금 재시작한 WebFlux가 12번에서 p95 705ms로 실패했는데, 이는 JIT 워밍업 문제였습니다. 짧은 워밍업을 넣고, 이후 모든 요청이 같은 시각에 연결하도록 출발 시점을 맞췄습니다.</div></li>
+      <li><div><strong>WebFlux 스트림 1건 정체 (원인 미확인).</strong> 한 실행에서 10번 중 1건이 토큰 8개 후 멈췄습니다. Backend는 10개를 모두 보내고 정상 종료했지만, 클라이언트는 나머지를 받지 못하고 18분 뒤 타임아웃됐습니다. 5회 다시 돌렸을 때는 재현되지 않았고, Gateway와 k6 클라이언트 중 어디서 멈췄는지는 확인하지 못했습니다. 이후 요청 타임아웃을 "스트림 길이 × 3 + 30초"로 줄였습니다.</div></li>
+    </ol>
   </section>
 
   <section id="appendix" aria-labelledby="app-h">

@@ -1,0 +1,21 @@
+# Adds a route to an address that never answers, for the connect-timeout scenario of the test runner.
+# Spring replaces lists per profile, so the regular route is repeated here.
+spring:
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: ai-chat
+              uri: ${poc.backend-url}
+              predicates:
+                - Path=/api/chat/**
+            - id: unreachable-backend
+              uri: ${poc.unreachable-backend-url}
+              predicates:
+                - Path=/unreachable/api/chat/**
+              filters:
+                - StripPrefix=1
+
+poc:
+  unreachable-backend-url: http://10.255.255.1:8081

@@ -3,7 +3,13 @@
 #   - read-timeout: the Jetty factory applies it as a TOTAL request timeout (default 10s), so it must cover the
 #     longest stream; backend max-duration is 10m (T05)
 #   - virtual threads: a blocked request thread per stream no longer caps concurrency at server.tomcat.threads.max (T10)
+#   - accept-count: Tomcat's listen backlog (default 100) overflowed when 500 clients connected at once; the dropped
+#     SYNs were retried after 1s, so ~5% of streams got their first token 1s late (TcpExt ListenOverflows > 0)
 # Run with: SPRING_PROFILES_ACTIVE=tuned ./gradlew :apps:gateway-mvc:bootRun --args='--server.port=8090'
+server:
+  tomcat:
+    accept-count: 1000
+
 spring:
   threads:
     virtual:

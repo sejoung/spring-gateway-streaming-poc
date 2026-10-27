@@ -1,0 +1,14 @@
+{
+  "name": "test-runner",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Runs the SSE gateway scenarios with k6 (xk6-sse) and serves results to the client",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

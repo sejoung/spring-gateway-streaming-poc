@@ -1,0 +1,124 @@
+# Everything for the PoC in one command:  docker compose up --build
+# Then open http://localhost:5173 and press "전체 실행" (or "빠른 실행") on the 테스트 tab.
+#
+# Main targets: ai-backend (:8081), gateway-mvc (:8080), gateway-mvc-tuned (:8090), gateway-webflux (:8082).
+# pit-* gateways reproduce the configurations that are expected to fail (docs/results.md); they are not published.
+# The gateways have response compression enabled for scenario 15; it only applies when a client sends
+# Accept-Encoding: gzip, and every other scenario asks for identity.
+
+x-spring-build: &spring-build
+  context: .
+  dockerfile: docker/spring.Dockerfile
+
+x-gateway-mvc: &gateway-mvc
+  build:
+    <<: *spring-build
+    target: gateway-mvc
+  image: sse-poc/gateway-mvc:local
+  depends_on: [ai-backend]
+  restart: unless-stopped
+
+x-pitfall-env: &pitfall-env
+  JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
+
+x-compression: &compression
+  - --poc.backend-url=http://ai-backend:8081
+  - --server.compression.enabled=true
+  - --server.compression.mime-types=text/event-stream
+  - --server.compression.min-response-size=0
+
+services:
+  ai-backend:
+    build:
+      <<: *spring-build
+      target: ai-backend
+    image: sse-poc/ai-backend:local
+    command: ["--chat.stream.log-each-event=false", "--chat.stream.registry-capacity=50000"]
+    ports: ["8081:8081"]
+    restart: unless-stopped
+
+  gateway-mvc:
+    <<: *gateway-mvc
+    environment:
+      SPRING_PROFILES_ACTIVE: testroutes
+    command: *compression
+    ports: ["8080:8080"]
+
+  gateway-mvc-tuned:
+    <<: *gateway-mvc
+    environment:
+      SPRING_PROFILES_ACTIVE: tuned,testroutes
+    command: *compression
+    ports: ["8090:8080"]
+
+  gateway-webflux:
+    build:
+      <<: *spring-build
+      target: gateway-webflux
+    image: sse-poc/gateway-webflux:local
+    depends_on: [ai-backend]
+    environment:
+      SPRING_PROFILES_ACTIVE: testroutes
+    command: *compression
+    ports: ["8082:8082"]
+    restart: unless-stopped
+
+  pit-jdk-rt10s:
+    <<: *gateway-mvc
+    environment: *pitfall-env
+    command: ["--poc.backend-url=http://ai-backend:8081", "--spring.http.client.read-timeout=10s"]
+
+  pit-jetty-nort:
+    <<: *gateway-mvc
+    environment: *pitfall-env
+    command: ["--poc.backend-url=http://ai-backend:8081", "--spring.http.client.factory=jetty"]
+
+  pit-jetty-pool64:
+    <<: *gateway-mvc
+    environment:
+      <<: *pitfall-env
+      SPRING_PROFILES_ACTIVE: tuned
+    command: ["--poc.backend-url=http://ai-backend:8081", "--poc.jetty-client.max-connections-per-destination=64"]
+
+  pit-jetty-platform:
+    <<: *gateway-mvc
+    environment:
+      <<: *pitfall-env
+      SPRING_PROFILES_ACTIVE: tuned
+    command: ["--poc.backend-url=http://ai-backend:8081", "--spring.threads.virtual.enabled=false"]
+
+  pit-vt-jdk:
+    <<: *gateway-mvc
+    environment: *pitfall-env
+    command: ["--poc.backend-url=http://ai-backend:8081", "--spring.threads.virtual.enabled=true"]
+
+  pit-simple:
+    <<: *gateway-mvc
+    environment: *pitfall-env
+    command: ["--poc.backend-url=http://ai-backend:8081", "--spring.http.client.factory=simple"]
+
+  front-proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./docker/nginx/front-proxy.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [gateway-mvc, gateway-mvc-tuned, gateway-webflux]
+    restart: unless-stopped
+
+  test-runner:
+    build: apps/test-runner
+    image: sse-poc/test-runner:local
+    volumes:
+      - runner-data:/data
+    ports: ["8070:8070"]
+    depends_on: [ai-backend, gateway-mvc, gateway-mvc-tuned, gateway-webflux, front-proxy]
+    restart: unless-stopped
+
+  client:
+    build: apps/client
+    image: sse-poc/client:local
+    ports: ["5173:80"]
+    depends_on: [test-runner]
+    restart: unless-stopped
+
+volumes:
+  runner-data:

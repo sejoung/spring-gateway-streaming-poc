@@ -3,6 +3,8 @@
 Kotlin + **Spring Boot 3.5.6** 기반 모노레포. AI 채팅 백엔드의 SSE 응답을 Spring Cloud Gateway **Server MVC와 Server WebFlux**가 각각 얼마나 지연 없이 클라이언트로 전달하는지 비교한다. 모든 Kotlin 패키지의 공통 루트는 **`io.github.sejoung`**이다.
 
 > 구현과 측정이 완료되었다. 결과와 결론은 [`docs/results.md`](docs/results.md)에 있다.
+>
+> **바로 해보기:** `docker compose up --build` → http://localhost:5173 → "빠른 실행" 또는 "전체 실행". 테스트가 k6로 실행되고 성공/실패 판정표가 화면에 나온다. 칸을 누르면 요청별·토큰별 기록과 k6 원시 데이터를 볼 수 있다. 자세한 내용은 [한 번에 실행하기](#한-번에-실행하기-docker-compose).
 
 ## 목표
 
@@ -38,8 +40,13 @@ spring-gateway-streaming-poc/
 ├── gradle.properties
 ├── gradlew
 ├── gradle/wrapper/
+├── docker-compose.yml         # 전체 구성 한 번에 실행
+├── docker/
+│   ├── spring.Dockerfile      # Spring 앱 3개 빌드 (target별 이미지)
+│   └── nginx/front-proxy.conf # 앞단 프록시 변형 (시나리오 16)
 ├── apps/
-│   ├── client/                # React, TypeScript, Vite (:5173)
+│   ├── client/                # React, TypeScript, Vite (:5173). 테스트 리포트 + 스트림 체험
+│   ├── test-runner/           # k6(xk6-sse) 실행기와 API (:8070). 시나리오·판정 기준은 src/catalog.mjs
 │   ├── gateway-mvc/           # io.github.sejoung.gateway.mvc (:8080)
 │   ├── gateway-webflux/       # io.github.sejoung.gateway.webflux (:8082)
 │   └── ai-backend/            # io.github.sejoung.ai.backend (:8081)
@@ -128,7 +135,7 @@ data:{"total":10,"elapsedMs":2043}
 | 클라이언트 abort | 기본 JDK client는 `close()`에서 남은 본문을 drain해서 **Backend 취소가 전파되지 않음**. Jetty client는 전파됨 | 즉시 전파 |
 | 동시 스트림 | 스트림당 요청 스레드 1개를 점유한다. 플랫폼 스레드에서는 `server.tomcat.threads.max`가 상한 | 이벤트 루프 |
 
-MVC Gateway에는 위 문제를 해결한 `tuned` 프로필(`application-tuned.yml`: Jetty client, read-timeout 10m, 가상 스레드)과, Jetty 커넥션 풀 크기 설정(`poc.jetty-client.max-connections-per-destination`, Jetty 기본 64)이 있다. 기본 프로필은 비교 기준선으로 Gateway 기본값(JDK client, 플랫폼 스레드)을 유지한다.
+MVC Gateway에는 위 문제를 해결한 `tuned` 프로필(`application-tuned.yml`: Jetty client, read-timeout 10m, 가상 스레드, Tomcat `accept-count` 1000)과, Jetty 커넥션 풀 크기 설정(`poc.jetty-client.max-connections-per-destination`, Jetty 기본 64)이 있다. 기본 프로필은 비교 기준선으로 Gateway 기본값(JDK client, 플랫폼 스레드)을 유지한다.
 
 ## PoC 범위에서 제외하는 항목
 
@@ -161,7 +168,46 @@ Gateway 선택(MVC/WebFlux), 메시지, `count`, `delayMs`, 시작/중단 버튼
 - [x] 동시 접속 부하 테스트 및 `docs/results.md` 작성.
 - [x] MVC 유지 vs WebFlux 전환 결론 정리.
 
-## 실행 명령
+## 한 번에 실행하기 (docker compose)
+
+```bash
+docker compose up --build     # 처음 빌드는 몇 분 걸린다. Docker에 메모리 5GB 이상 권장
+open http://localhost:5173    # "테스트 리포트" 탭
+docker compose down           # 종료 (실행 기록은 runner-data 볼륨에 남는다. 지우려면 down -v)
+```
+
+| 서비스 | 주소 | 설명 |
+| --- | --- | --- |
+| client | http://localhost:5173 | 테스트 리포트(실행 버튼, 판정표, 건별 상세)와 스트림 체험 화면 |
+| test-runner | http://localhost:8070/api | 버튼을 받아 `k6 run`을 실행하고, k6 원시 데이터로 판정한다 |
+| ai-backend | http://localhost:8081 | 모의 토큰 스트림 |
+| gateway-mvc / gateway-mvc-tuned / gateway-webflux | :8080 / :8090 / :8082 | 비교 대상 |
+| pit-* (6개) | 내부 전용 | "설정을 잘못하면 실패하는 항목"을 재현하는 MVC 구성 |
+| front-proxy | 내부 전용 | 시나리오 16의 nginx 변형 |
+
+**화면에서 할 수 있는 것**
+
+- **전체 실행**: 판정표 16개 시나리오 × 4개 대상 + 설정 함정 6개, 약 12분. **빠른 실행**: 핵심 7개 시나리오, 약 1.5분.
+- 진행 상황과 k6 로그가 실시간으로 나온다. 진행 상황 자체도 SSE로 받는다.
+- 판정표 칸을 누르면 판정 기준과 근거, 실패 이유와 해결 방법, 측정값, 요청별 기록, 토큰별 타임라인을 볼 수 있다. 그 건만 다시 실행하거나 k6 원시 데이터(JSON lines)를 받을 수도 있다.
+- 실행 기록이 남아서 이전 실행 결과와 비교할 수 있다.
+
+**측정 방식**
+
+- 시나리오 하나 × 대상 하나가 `k6 run` 한 번이다(`apps/test-runner/k6/sse-case.js`). k6에는 SSE 이벤트를 받을 때마다 시각을 잴 수 있도록 [xk6-sse](https://github.com/phymbert/xk6-sse) 확장을 넣어 빌드했다.
+- 요청마다 k6 JSON 출력에 원시 데이터 한 줄(`sse_request_ms`)을 남긴다. 메타데이터에 요청 ID와 상세(상태, 결과, 토큰별 수신 시각·지연, 중단 시 Backend 기록)가 들어 있다. 판정은 이 원시 데이터만으로 계산한다(`apps/test-runner/src/judge.mjs`).
+- compose의 세 Gateway는 시나리오 15를 위해 응답 압축을 켜 두었다. 압축은 클라이언트가 `Accept-Encoding: gzip`을 보낼 때만 적용되고, 나머지 시나리오는 `identity`로 요청한다.
+- Docker Desktop의 VM 안에서 측정하므로 ms 수치는 `docs/results.md`(호스트에서 측정)와 다를 수 있다. 성공/실패 판정은 같은 결과가 나오는 것을 확인했다.
+
+k6 스크립트는 화면 없이 단독으로도 돌릴 수 있다.
+
+```bash
+docker compose run --rm --entrypoint k6 test-runner run \
+  -e BASE_URL=http://gateway-mvc:8080 -e BACKEND_URL=http://ai-backend:8081 \
+  -e COUNT=50 -e ABORT_AFTER=3 -e ITERATIONS=3 k6/sse-case.js
+```
+
+## 실행 명령 (개별 실행)
 
 ```bash
 # 각각 별도 터미널
@@ -233,7 +279,7 @@ curl -N -sS -X POST http://localhost:8080/api/chat/stream \
 
 ## 의사결정 기준
 
-**결론: 기존 MVC Gateway 유지 + `tuned` 구성(Jetty client, read-timeout ≥ 최대 스트림 길이, Jetty 풀 크기, 가상 스레드) 적용.** 근거와 재검토 조건은 `docs/results.md`의 [의사결정](docs/results.md#의사결정) 절에 있다.
+**결론: 기존 MVC Gateway 유지 + `tuned` 구성(Jetty client, read-timeout ≥ 최대 스트림 길이, Jetty 풀 크기, 가상 스레드, accept-count) 적용.** 근거와 재검토 조건은 `docs/results.md`의 [의사결정](docs/results.md#의사결정) 절에 있다.
 
 
 **MVC 유지:** 스트리밍이 이벤트 단위로 전달되고 목표 동시 연결 수·지연·취소 처리 기준을 만족하며 운영 복잡도가 낮을 때.
