@@ -1,0 +1,58 @@
+server:
+  port: 8080
+  tomcat:
+    threads:
+      # Each proxied SSE stream occupies one request thread for its whole lifetime.
+      max: 200
+
+spring:
+  application:
+    name: gateway-mvc
+  threads:
+    virtual:
+      # Platform threads by default (the "existing MVC" baseline). Set SPRING_THREADS_VIRTUAL_ENABLED=true to compare.
+      enabled: false
+  http:
+    client:
+      # Pinned to the JDK client (Gateway MVC's default) because jetty-client is also on the classpath and would win
+      # autodetection. Override with SPRING_HTTP_CLIENT_FACTORY=jetty for the cancel-propagation comparison.
+      factory: jdk
+      connect-timeout: 2s
+      # read-timeout is intentionally unset. With the JDK client, Spring's JdkClientHttpRequest treats it as a deadline
+      # for the WHOLE response (body is closed when it expires), so any SSE stream longer than it is truncated.
+      # With factory=simple it is a per-read idle timeout instead. The Jetty factory defaults to a 10s TOTAL timeout,
+      # so with SPRING_HTTP_CLIENT_FACTORY=jetty also set SPRING_HTTP_CLIENT_READ_TIMEOUT to the longest stream (e.g. 10m).
+      # See docs/results.md (T05, T06).
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: ai-chat
+              uri: ${poc.backend-url}
+              predicates:
+                - Path=/api/chat/**
+          # text/event-stream is already in the default list; responses of these types are flushed after every read.
+          streaming-media-types:
+            - text/event-stream
+            - application/x-ndjson
+
+poc:
+  backend-url: http://localhost:8081
+  jetty-client:
+    # Only used with spring.http.client.factory=jetty (Jetty's own default is 64).
+    max-connections-per-destination: 2048
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"

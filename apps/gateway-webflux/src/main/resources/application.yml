@@ -1,0 +1,39 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: gateway-webflux
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            # TCP connect timeout to the backend (milliseconds).
+            connect-timeout: 2000
+            # Time until the backend's response HEADERS arrive (NettyRoutingFilter applies it to the response Mono).
+            # It does not bound the stream body, so long SSE streams are unaffected. A backend that delays its first
+            # event (and therefore its headers) longer than this gets a 504. There is no idle timeout between events.
+            response-timeout: 10s
+          routes:
+            - id: ai-chat
+              uri: ${poc.backend-url}
+              predicates:
+                - Path=/api/chat/**
+
+poc:
+  backend-url: http://localhost:8081
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"

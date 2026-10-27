@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gateway SSE 스트리밍 비교</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one reading column (~46rem) for an engineering report; wide tables scroll inside their own frames. */
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --fg: #151a22;
+  --muted: #5a6474;
+  --line: #dde2ea;
+  --accent: #2c55b8;
+  --accent-soft: #e6ecf9;
+  --good: #1d7a45;
+  --good-soft: #e3f3e9;
+  --bad: #b8322a;
+  --bad-soft: #fbe7e5;
+  --warn: #8a5a00;
+  --warn-soft: #fbf0d9;
+  --bar: #9aa8bf;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151b; --surface: #181d25; --fg: #e5e9ef; --muted: #98a2b2; --line: #2a313c;
+    --accent: #84a6f0; --accent-soft: #1f2a41;
+    --good: #5cc98a; --good-soft: #15291e; --bad: #f08a80; --bad-soft: #351a18; --warn: #e2b555; --warn-soft: #30260f;
+    --bar: #5b6880;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151b; --surface: #181d25; --fg: #e5e9ef; --muted: #98a2b2; --line: #2a313c;
+  --accent: #84a6f0; --accent-soft: #1f2a41;
+  --good: #5cc98a; --good-soft: #15291e; --bad: #f08a80; --bad-soft: #351a18; --warn: #e2b555; --warn-soft: #30260f;
+  --bar: #5b6880;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding-block: 48px 80px;
+  display: grid;
+  gap: 56px;
+}
+section { display: grid; gap: 16px; min-width: 0; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.375rem; font-weight: 700; }
+h3 { font-size: 1.0625rem; font-weight: 600; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 6px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.875em; }
+code { background: var(--accent-soft); padding: 0.1em 0.35em; border-radius: 4px; word-break: break-word; }
+strong { font-weight: 600; }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+header { display: grid; gap: 12px; }
+header .lede { color: var(--muted); max-width: 40rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.875rem; color: var(--muted); }
+.meta span b { color: var(--fg); font-weight: 500; }
+
+.verdict {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px 22px;
+  display: grid;
+  gap: 10px;
+}
+.verdict .call { font-size: 1.1875rem; font-weight: 700; }
+.verdict p { color: var(--muted); }
+
+.sse {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  color: var(--muted);
+}
+.sse b { color: var(--accent); font-weight: 500; }
+
+.findings { list-style: none; padding: 0; gap: 0; border-top: 1px solid var(--line); }
+.findings li {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 4px 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.findings .body { min-width: 0; display: grid; gap: 2px; }
+.findings .body p { color: var(--muted); font-size: 0.9375rem; }
+
+.chip {
+  display: inline-block;
+  justify-self: start;
+  align-self: start;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  margin-top: 4px;
+}
+.chip.ok { color: var(--good); background: var(--good-soft); }
+.chip.bad { color: var(--bad); background: var(--bad-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; vertical-align: top; }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 11rem; }
+thead th { font-weight: 600; font-size: 0.8125rem; color: var(--muted); background: var(--bg); }
+tbody tr:last-child td { border-bottom: none; }
+td.num, td .num { font-family: var(--font-mono); font-size: 0.8125rem; }
+td.wrap { white-space: normal; text-align: left; min-width: 14rem; }
+.hl-bad { color: var(--bad); font-weight: 600; }
+.hl-good { color: var(--good); font-weight: 600; }
+.caption { font-size: 0.8125rem; color: var(--muted); }
+
+.chart { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 18px 14px; }
+.chart h3 { font-size: 0.9375rem; }
+.bars { display: grid; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: 8.5rem 1fr; gap: 12px; align-items: center; font-size: 0.8125rem; }
+.bar-row .label { color: var(--muted); }
+.bar-track { position: relative; height: 22px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bar { height: 14px; min-width: 3px; border-radius: 2px; background: var(--bar); flex: none; }
+.bar.bad { background: var(--bad); }
+.bar.good { background: var(--good); }
+.bar-value { font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap; }
+.axis { display: grid; grid-template-columns: 8.5rem 1fr; gap: 12px; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--muted); }
+.axis .ticks { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 4px; }
+
+.legend { display: grid; gap: 4px; font-size: 0.875rem; }
+dl.labels { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.9375rem; }
+dl.labels dt { font-family: var(--font-mono); font-size: 0.8125rem; padding-top: 2px; }
+dl.labels dd { margin: 0; color: var(--muted); min-width: 0; }
+
+.scenario { display: grid; gap: 12px; padding-top: 8px; }
+.scenario + .scenario { border-top: 1px solid var(--line); padding-top: 24px; }
+.scenario h3 .id { font-family: var(--font-mono); font-weight: 500; color: var(--accent); margin-right: 8px; }
+.scenario p { color: var(--fg); }
+.note { font-size: 0.9375rem; color: var(--muted); }
+
+.steps { counter-reset: step; list-style: none; padding: 0; gap: 10px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 1.75rem 1fr; gap: 10px; }
+.steps li::before {
+  content: counter(step);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 50%;
+  width: 1.5rem; height: 1.5rem;
+  display: grid; place-items: center;
+  margin-top: 2px;
+}
+.steps li > div { min-width: 0; }
+
+pre.cmd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.65;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+pre.cmd .c { color: var(--muted); }
+
+footer { font-size: 0.8125rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+
+.scores { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.score { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+.score.recommended { border-color: var(--good); }
+.score-name { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.score-name .chip { margin-top: 0; }
+.score-counts { display: flex; flex-wrap: wrap; gap: 6px 12px; font-family: var(--font-mono); font-size: 0.8125rem; }
+.n-pass { color: var(--good); }
+.n-fail { color: var(--bad); font-weight: 500; }
+.n-other { color: var(--muted); }
+.score p { color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+table.matrix td:not(:first-child) { text-align: center; vertical-align: middle; font-weight: 600; }
+table.matrix th:not(:first-child) { text-align: center; }
+table.matrix td:first-child { min-width: 15rem; }
+table.matrix small { font-weight: 400; color: var(--muted); }
+td.pass { color: var(--good); background: var(--good-soft); }
+td.fail { color: var(--bad); background: var(--bad-soft); }
+td.unstable { color: var(--warn); background: var(--warn-soft); }
+td.na { color: var(--muted); font-weight: 400 !important; }
+.tid { font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent); font-weight: 400; }
+.crit { color: var(--muted); font-size: 0.8125rem; }
+.fail-text { color: var(--bad); }
+.failure { display: grid; gap: 10px; padding-top: 4px; }
+.failure + .failure { border-top: 1px solid var(--line); padding-top: 20px; }
+.failure h3 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.failure h3 .chip { margin-top: 0; }
+dl.why { margin: 0; display: grid; grid-template-columns: 4.5rem 1fr; gap: 6px 14px; font-size: 0.9375rem; }
+dl.why dt { color: var(--muted); font-size: 0.8125rem; padding-top: 2px; }
+dl.why dd { margin: 0; min-width: 0; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+summary { cursor: pointer; padding: 12px 16px; font-weight: 600; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details[open] summary { border-bottom: 1px solid var(--line); }
+.details-body { padding: 16px; display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 560px) {
+  .scores { grid-template-columns: 1fr; }
+  dl.why { grid-template-columns: 1fr; gap: 2px; }
+  dl.why dd { margin-bottom: 8px; }
+}
+
+@media (max-width: 560px) {
+  h1 { font-size: 1.625rem; }
+  .findings li { grid-template-columns: 1fr; }
+  .bar-row, .axis { grid-template-columns: 6rem 1fr; }
+  dl.labels { grid-template-columns: 1fr; gap: 2px; }
+  dl.labels dd { margin-bottom: 8px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">spring-gateway-streaming-poc · 측정일 2026-10-27</div>
+    <h1>Gateway MVC vs WebFlux: AI 채팅 SSE 프록시 비교</h1>
+    <p class="lede">AI 채팅 Backend의 SSE 응답을 Spring Cloud Gateway Server MVC와 Server WebFlux가 제대로 전달하는지 16개 시나리오로 확인하고, 각 항목을 성공/실패로 판정했습니다. 측정 시간은 맨 아래 부록에 접어 두었습니다.</p>
+    <div class="meta">
+      <span>Boot <b>3.5.6</b></span>
+      <span>Spring Cloud <b>2025.0.3</b> (Gateway 4.3.5)</span>
+      <span>Java <b>21</b></span>
+      <span>HTTP/1.1 · 단일 머신</span>
+    </div>
+  </header>
+
+  <section id="glance" aria-labelledby="glance-h">
+    <h2 id="glance-h">한눈에 보기</h2>
+    <div class="scores">
+      <div class="score">
+        <div class="score-name">MVC 기본</div>
+        <div class="score-counts"><span class="n-pass">성공 11</span><span class="n-fail">실패 4</span><span class="n-other">불안정 1</span></div>
+        <p>사용자가 중단해도 Backend가 멈추지 않고, 동시 스트림 200개를 넘으면 대기합니다.</p>
+      </div>
+      <div class="score recommended">
+        <div class="score-name">MVC tuned <span class="chip ok">권장</span></div>
+        <div class="score-counts"><span class="n-pass">성공 15</span><span class="n-fail">실패 1</span></div>
+        <p>스트림 중간 오류를 클라이언트가 오류로 알 수 없습니다. <code>done</code> 이벤트로 보완합니다.</p>
+      </div>
+      <div class="score">
+        <div class="score-name">WebFlux</div>
+        <div class="score-counts"><span class="n-pass">성공 15</span><span class="n-fail">실패 1</span></div>
+        <p>첫 토큰이 10초보다 늦으면 504. <code>response-timeout</code> 설정값 문제라 값을 늘리면 됩니다.</p>
+      </div>
+    </div>
+    <div class="verdict">
+      <div class="call">기존 MVC Gateway를 유지하고 <code>tuned</code> 구성을 적용한다.</div>
+      <p>MVC 기본의 실패 4개는 모두 설정으로 해결됐습니다. tuned에 남은 실패 1개는 클라이언트가 <code>done</code> 이벤트로 완료를 판정하면 문제가 되지 않습니다. WebFlux로 옮겨서 추가로 얻는 성공 항목이 없으므로 Security·필터 마이그레이션 비용을 정당화하기 어렵습니다.</p>
+    </div>
+    <dl class="labels">
+      <dt>Backend 직접</dt><dd>Gateway 없이 Backend를 직접 호출. 비교 기준선</dd>
+      <dt>MVC 기본</dt><dd>Gateway MVC 기본값. JDK HTTP 클라이언트, Tomcat 플랫폼 스레드 최대 200개</dd>
+      <dt>MVC tuned</dt><dd>Jetty HTTP 클라이언트 + read-timeout 10분 + Jetty 커넥션 풀 2048 + 가상 스레드 (<code>application-tuned.yml</code>)</dd>
+      <dt>WebFlux</dt><dd>Gateway WebFlux 기본값 + connect-timeout 2초, response-timeout 10초</dd>
+    </dl>
+  </section>
+
+  <section id="matrix" aria-labelledby="matrix-h">
+    <h2 id="matrix-h">판정표</h2>
+    <p class="note">각 시나리오의 판정 기준을 만족했는지만 표시했습니다. —는 해당 없음입니다.</p>
+    <div class="table-wrap">
+      <table class="matrix">
+        <thead>
+          <tr><th>시나리오와 판정 기준</th><th>Backend 직접</th><th>MVC 기본</th><th>MVC tuned</th><th>WebFlux</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>1. 정상 응답</b> <span class="tid">T01–T03</span><br><span class="crit">200, text/event-stream, 토큰 10개 + done이 순서대로</span></td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>2. 버퍼링</b> <span class="tid">T02–T03</span><br><span class="crit">응답이 끝나기 전부터 토큰이 하나씩 도착</span></td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>3. 추가 지연</b> <span class="tid">T04</span><br><span class="crit">Backend 직접 대비 첫 토큰이 10ms 이상 늦지 않음</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>4. 30초 이상 스트림</b> <span class="tid">T05</span><br><span class="crit">33초 스트림이 중간에 끊기지 않음</span></td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>5. 연결 타임아웃</b><br><span class="crit">Backend에 연결할 수 없을 때 약 2초 안에 오류 응답</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>6. 첫 토큰 지연</b><br><span class="crit">첫 토큰이 12초 뒤에 나와도 스트림 유지</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="fail">실패</td></tr>
+          <tr><td><b>7. 사용자 중단</b> <span class="tid">T06</span><br><span class="crit">중단 후 1초 안에 Backend가 토큰 생성을 멈춤</span></td><td class="pass">성공</td><td class="fail">실패</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>8. 헤더 전 오류</b> <span class="tid">T09</span><br><span class="crit">Backend의 500을 클라이언트가 그대로 받음</span></td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>9. 스트림 중간 오류</b> <span class="tid">T09</span><br><span class="crit">클라이언트가 연결 오류로 감지</span></td><td class="pass">성공</td><td class="fail">실패</td><td class="fail">실패</td><td class="pass">성공</td></tr>
+          <tr><td><b>10. 100개 동시</b> <span class="tid">T10</span><br><span class="crit">전부 성공 + 첫 토큰 p95 0.5초 이내</span></td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>11. 500개 동시</b> <span class="tid">T10</span><br><span class="crit">전부 성공 + 첫 토큰 p95 0.5초 이내</span></td><td class="pass">성공</td><td class="fail">실패</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>12. 500개 동시 × 20초</b> <span class="tid">T10</span><br><span class="crit">전부 성공 + 첫 토큰 p95 0.5초 이내</span></td><td class="pass">성공</td><td class="fail">실패</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>13. k6 500 VU 반복</b> <span class="tid">T10</span><br><span class="crit">모든 실행에서 성공률 99% 이상</span></td><td class="pass">성공</td><td class="unstable">불안정<br><small>5회 중 1회 92.3%</small></td><td class="pass">성공<br><small>1회</small></td><td class="pass">성공<br><small>4회</small></td></tr>
+          <tr><td><b>14. CORS</b> <span class="tid">T11</span><br><span class="crit">로컬 Origin preflight 허용, 다른 Origin 거부</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>15. Gateway gzip</b> <span class="tid">T12</span><br><span class="crit">gzip을 켜도 토큰이 하나씩 도착</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+          <tr><td><b>16. 앞단 nginx</b> <span class="tid">T12</span><br><span class="crit">nginx 기본·버퍼링 강제·gzip에서 토큰이 하나씩 도착</span></td><td class="na">—</td><td class="pass">성공</td><td class="pass">성공</td><td class="pass">성공</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">MVC tuned 열은 모두 tuned 프로필 또는 같은 설정을 명령행 인자로 준 인스턴스로 측정했습니다.</p>
+  </section>
+
+  <section id="failures" aria-labelledby="fail-h">
+    <h2 id="fail-h">실패한 항목</h2>
+
+    <div class="failure">
+      <h3><span class="chip bad">MVC 기본</span> 7번: 사용자가 중단해도 Backend가 멈추지 않음</h3>
+      <dl class="why">
+        <dt>무슨 일</dt><dd>클라이언트가 토큰 3개를 받고 연결을 끊어도, Backend는 남은 47개를 끝까지 만들고 정상 종료했습니다. 5회 모두 같았습니다.</dd>
+        <dt>왜</dt><dd>MVC Gateway는 클라이언트에 다음 토큰을 쓰려다 실패해야 끊긴 것을 압니다. 그 뒤 Backend 응답을 닫는데, Spring의 JDK 클라이언트는 닫을 때 연결 재사용을 위해 <strong>남은 응답을 끝까지 읽습니다</strong>(drain). 그래서 Backend는 클라이언트가 떠난 줄 모릅니다.</dd>
+        <dt>영향</dt><dd>실제 LLM이라면 사용자가 보지 않을 토큰 비용이 끝까지 나가고, 그동안 Tomcat 스레드와 Backend 연결이 하나씩 묶입니다.</dd>
+        <dt>해결</dt><dd>Jetty 클라이언트(<code>spring.http.client.factory=jetty</code>)는 drain하지 않고 바로 닫습니다. tuned에서 성공. 상세 과정은 부록의 <a href="#t06">T06</a>.</dd>
+      </dl>
+    </div>
+
+    <div class="failure">
+      <h3><span class="chip bad">MVC 기본</span> 11·12번: 동시 스트림 200개를 넘으면 대기</h3>
+      <dl class="why">
+        <dt>무슨 일</dt><dd>요청은 모두 성공했지만, 201번째부터는 앞선 스트림이 끝날 때까지 첫 토큰을 받지 못했습니다. 500개 × 20초 스트림에서는 마지막 배치가 첫 토큰을 받기까지 40초 넘게 기다렸습니다.</dd>
+        <dt>왜</dt><dd>MVC Gateway는 스트림 하나가 Tomcat 스레드 하나를 스트림이 끝날 때까지 점유합니다. Tomcat 기본 최대 스레드는 200개입니다.</dd>
+        <dt>해결</dt><dd>가상 스레드(<code>spring.threads.virtual.enabled=true</code>)를 켜거나 <code>server.tomcat.threads.max</code>를 목표 동시 스트림 수 이상으로 늘립니다. tuned에서 성공.</dd>
+      </dl>
+    </div>
+
+    <div class="failure">
+      <h3><span class="chip warn">MVC 기본</span> 13번: k6 500 VU에서 1회 연결 실패</h3>
+      <dl class="why">
+        <dt>무슨 일</dt><dd>5회 실행 중 첫 1회에서 1,000건 중 77건이 연결 실패했습니다. 이후 4회는 모두 성공했습니다.</dd>
+        <dt>왜</dt><dd>재현되지 않았고 원인을 확인하지 못했습니다. 11번과 같은 스레드 부족 상태에서 연결이 몰린 것과 관련 있을 수 있지만 검증하지 않았습니다.</dd>
+      </dl>
+    </div>
+
+    <div class="failure">
+      <h3><span class="chip bad">MVC 기본 · tuned</span> 9번: 스트림 중간 오류를 클라이언트가 오류로 알 수 없음</h3>
+      <dl class="why">
+        <dt>무슨 일</dt><dd>Backend가 토큰 5개를 보낸 뒤 오류로 스트림을 끊었을 때, Backend 직접 호출과 WebFlux에서는 클라이언트가 연결 오류를 받았습니다. MVC를 거치면 스트림이 정상적으로 끝난 것처럼 닫혔습니다.</dd>
+        <dt>왜</dt><dd>응답이 이미 시작된 뒤 예외가 나면 Tomcat이 응답을 정상 종료합니다.</dd>
+        <dt>해결</dt><dd>Gateway 설정으로는 해결하지 못했습니다. 클라이언트가 <strong><code>done</code> 이벤트를 받았을 때만 정상 완료로 판정</strong>하면 됩니다. 이 저장소의 React 클라이언트와 측정 스크립트는 이렇게 처리합니다.</dd>
+      </dl>
+    </div>
+
+    <div class="failure">
+      <h3><span class="chip bad">WebFlux</span> 6번: 첫 토큰이 10초보다 늦으면 504</h3>
+      <dl class="why">
+        <dt>무슨 일</dt><dd>첫 토큰이 12초 뒤에 나오는 스트림에서 WebFlux Gateway가 10초에 504를 반환했습니다.</dd>
+        <dt>왜</dt><dd>WebFlux의 <code>response-timeout</code>은 Backend의 응답 헤더가 올 때까지만 기다립니다. Backend는 첫 토큰과 함께 헤더를 보내므로, 이 값이 사실상 "첫 토큰 대기 제한"이 됩니다. 이 측정에서는 10초로 설정했습니다.</dd>
+        <dt>해결</dt><dd><code>response-timeout</code>을 첫 토큰 최대 대기 시간보다 길게 잡거나, Backend가 헤더를 먼저 보내게 합니다. 스트림 본문에는 적용되지 않으므로 긴 스트림 자체에는 영향이 없습니다(4번 성공).</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="misconfig" aria-labelledby="mis-h">
+    <h2 id="mis-h">설정을 잘못하면 실패하는 항목</h2>
+    <p class="note">기본값이나 흔히 쓰는 설정으로 바꿨을 때 실패한 경우입니다. 운영 설정을 정할 때 피해야 합니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>설정</th><th>실패한 시나리오</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>MVC + JDK 클라이언트 + <code>read-timeout=10s</code></td><td class="wrap fail-text">4번: 30초 스트림이 10초에서 끊김</td><td class="wrap">JDK 클라이언트의 read-timeout은 응답 <strong>전체</strong> 시간 제한입니다</td></tr>
+          <tr><td>MVC + Jetty, read-timeout 미설정</td><td class="wrap fail-text">4번: 10초에서 끊김</td><td class="wrap">Spring의 Jetty 팩토리는 기본 10초를 전체 시간 제한으로 씁니다</td></tr>
+          <tr><td>MVC + Jetty, 커넥션 풀 기본값(64)</td><td class="wrap fail-text">10·11번: 65번째부터 대기</td><td class="wrap">스트림마다 Backend 연결을 하나씩 점유합니다</td></tr>
+          <tr><td>MVC + Jetty, 플랫폼 스레드</td><td class="wrap fail-text">11번</td><td class="wrap">스레드 200개 상한은 그대로입니다</td></tr>
+          <tr><td>MVC + 가상 스레드만 (JDK 클라이언트 유지)</td><td class="wrap fail-text">7번</td><td class="wrap">스레드 문제만 풀리고 drain 문제는 남습니다</td></tr>
+          <tr><td>MVC + <code>simple</code> 클라이언트</td><td class="wrap fail-text">7번</td><td class="wrap"><code>simple</code>도 닫을 때 drain합니다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">참고로 MVC + simple 클라이언트 + read-timeout=10s는 4번에 성공했습니다. simple의 read-timeout은 토큰 사이 대기 시간에만 적용되기 때문입니다.</p>
+  </section>
+
+  <section id="decision" aria-labelledby="dec-h">
+    <h2 id="dec-h">결론과 권장 설정</h2>
+    <ul>
+      <li><strong>MVC 유지 조건</strong>(이벤트 단위 전달, 목표 동시 연결·지연·취소 처리 충족, 낮은 운영 복잡도): MVC 기본은 7·11·12번 실패로 불충족입니다. tuned는 9번을 제외하고 충족하며, 9번은 클라이언트에서 보완됩니다. 운영 복잡도는 설정 몇 줄과 커넥션 풀 Bean 하나입니다.</li>
+      <li><strong>WebFlux 전환 조건</strong>(연결 수가 늘 때 리소스 효율이나 지연이 유의미하게 개선): tuned 대비 WebFlux가 추가로 성공하는 항목은 9번 하나입니다. 500개 동시까지 지연과 리소스 차이도 작았습니다(부록 참고).</li>
+    </ul>
+    <h3>tuned 구성</h3>
+    <ol class="steps">
+      <li><div><code>spring.http.client.factory=jetty</code>. 7번 해결.</div></li>
+      <li><div><code>spring.http.client.read-timeout</code>을 서비스의 최대 스트림 길이 이상으로 설정합니다. Jetty는 이 값을 전체 시간 제한으로 쓰므로, 설정하지 않으면 10초에서 끊깁니다.</div></li>
+      <li><div>Jetty <code>maxConnectionsPerDestination</code>을 목표 동시 스트림 수 이상으로 설정합니다(기본 64). 이 저장소에서는 <code>poc.jetty-client.max-connections-per-destination</code>입니다.</div></li>
+      <li><div><code>spring.threads.virtual.enabled=true</code>, 또는 <code>server.tomcat.threads.max</code>를 목표 동시 스트림 수 이상으로 설정합니다. 11·12번 해결.</div></li>
+      <li><div>클라이언트는 <code>done</code> 이벤트로 정상 완료를 판정합니다. 9번 보완.</div></li>
+    </ol>
+    <h3>WebFlux 전환을 다시 검토할 조건</h3>
+    <ul>
+      <li>목표 동시 스트림이 500보다 훨씬 많아서, 별도 호스트에서 재측정했을 때 tuned가 실패하는 항목이 생길 때.</li>
+      <li>9번(스트림 중간 오류를 연결 오류로 구분)이 반드시 필요할 때.</li>
+      <li>Jetty 클라이언트를 쓸 수 없는 제약이 생겼는데, Spring 업그레이드로 JDK 클라이언트의 drain 동작이 바뀌지 않았을 때. 저장소의 <code>GatewayMvcJdkClientTest</code>가 현재 동작을 고정하고 있어서, 동작이 바뀌면 이 테스트가 실패합니다.</li>
+    </ul>
+  </section>
+
+  <section id="appendix" aria-labelledby="app-h">
+    <h2 id="app-h">부록: 측정값</h2>
+    <p class="note">판정의 근거가 된 수치입니다. 판정표만으로 충분하면 펼치지 않아도 됩니다. 값이 두 개인 칸은 p50 / p95입니다.</p>
+    <details>
+      <summary>주요 지표 (첫 토큰 시간, 간격, 동시 연결, CPU·메모리)</summary>
+      <div class="details-body">
+
+    <p class="note">값이 두 개면 p50 / p95입니다. 단일 스트림은 토큰 10개 × 200ms 간격, 워밍업 5회 후 30회 반복. 동시 연결은 워밍업 1라운드 후 3라운드입니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>지표</th><th>Backend 직접</th><th>MVC 기본</th><th>MVC tuned</th><th>WebFlux</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>TTFE (ms), 200ms 간격</td><td class="num">207.1 / 208.2</td><td class="num">208.4 / 209.5</td><td class="num">212.3 / 217.3</td><td class="num">208.9 / 214.8</td></tr>
+          <tr><td>TTFE (ms), 0ms 간격 (순수 왕복)</td><td class="num">1.8 / 2.3</td><td class="num">2.7 / 3.3</td><td class="num">2.6 / 3.4</td><td class="num">2.5 / 3.3</td></tr>
+          <tr><td>이벤트 간격 (ms)</td><td class="num">204.6 / 205.2</td><td class="num">204.6 / 205.2</td><td class="num">204.0 / 209.5</td><td class="num">204.0 / 207.4</td></tr>
+          <tr><td>이벤트 lag (ms, 수신 − 생성)</td><td class="num">1 / 1</td><td class="num">1 / 1</td><td class="num">2 / 5</td><td class="num">1 / 3</td></tr>
+          <tr><td>전체 완료 p50 (ms)</td><td class="num">2040.5</td><td class="num">2042.6</td><td class="num">2048.6</td><td class="num">2041.9</td></tr>
+          <tr><td>100 동시: 성공률 / TTFE p95</td><td class="num">100% / 232</td><td class="num">100% / 264</td><td class="num">100% / 233</td><td class="num">100% / 231</td></tr>
+          <tr><td>500 동시: 성공률 / TTFE p95</td><td class="num">100% / 236</td><td class="num"><span class="hl-bad">100% / 4,355</span></td><td class="num">100% / 257</td><td class="num">100% / 266</td></tr>
+          <tr><td>CPU 평균 / 최대 % (500 × 2초)</td><td class="num">13.7 / 31.6</td><td class="num">8.1 / 37.0</td><td class="num">45.7 / 81.4</td><td class="num">31.5 / 89.6</td></tr>
+          <tr><td>RSS MB / 스레드 (500 × 2초)</td><td class="num">419 / 30</td><td class="num">463 / 339</td><td class="num">622 / 58</td><td class="num">456 / 30</td></tr>
+          <tr><td>취소 전파 (ms)</td><td class="num">0 / 1</td><td class="num"><span class="hl-bad">전파 안 됨</span></td><td class="num">204 / 410</td><td class="num">1 / 4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">MVC 기본의 500 동시 성공률 100%는 실패가 없었다는 뜻일 뿐입니다. 200개를 넘는 요청은 Tomcat 작업 큐에서 앞 스트림이 끝나기를 기다렸습니다. CPU는 코어 1개 = 100%이고, macOS <code>ps</code>의 감쇠 평균이라 구성 간 상대 비교로만 보세요. Backend 직접 열의 리소스는 Backend 프로세스 값입니다.</p>
+      </div>
+    </details>
+    <details>
+      <summary>지표 읽는 법 (TTFE, lag, p50/p95)</summary>
+      <div class="details-body">
+
+    <dl class="labels">
+      <dt>TTFE</dt><dd>요청을 보내고 첫 토큰을 받기까지의 시간. Backend가 토큰을 200ms 간격으로 내보내므로 약 200ms가 정상입니다.</dd>
+      <dt>lag</dt><dd>Backend가 이벤트에 기록한 생성 시각(<code>emittedAt</code>)과 클라이언트 수신 시각의 차이. 중간 버퍼링이 있으면 커집니다.</dd>
+      <dt>p50 / p95</dt><dd>중앙값 / 느린 쪽 5%의 경계값.</dd>
+      <dt>MVC 기본</dt><dd>Gateway MVC 기본값. JDK HTTP 클라이언트, Tomcat 플랫폼 스레드 최대 200개.</dd>
+      <dt>MVC tuned</dt><dd>Jetty 클라이언트 + read-timeout 10분 + Jetty 커넥션 풀 2048 + 가상 스레드. 저장소의 <code>application-tuned.yml</code>.</dd>
+      <dt>WebFlux</dt><dd>Gateway WebFlux 기본값 + connect-timeout 2초, response-timeout 10초.</dd>
+    </dl>
+    <pre class="sse" aria-label="Backend가 보내는 SSE 예시"><b>event:</b>token
+<b>data:</b>{"index":0,"content":"token-0","emittedAt":1793075706898}
+
+<b>event:</b>done
+<b>data:</b>{"total":10,"elapsedMs":2043}</pre>
+      </div>
+    </details>
+    <details id="t06-details">
+      <summary>시나리오별 측정값 (T01–T12, T06 취소 전파 상세 포함)</summary>
+      <div class="details-body">
+
+
+    <div class="scenario">
+      <h3><span class="id">T01–T03 · T11</span>스모크와 CORS</h3>
+      <p>Backend, MVC, WebFlux, MVC tuned 모두 통과했습니다. 상태 200, <code>text/event-stream</code>, <code>Cache-Control: no-cache</code>, 토큰 10개와 done 순서 보존, 1.1초 시점에 이미 토큰 5개 도착(버퍼링 없음). 두 Gateway 모두 <code>http://localhost:5173</code>의 preflight에 200을 주고, 허용하지 않은 Origin에는 403을 줍니다.</p>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">T04</span>최초 이벤트 지연</h3>
+      <p>간격 0ms에서 Backend 직접 1.8ms, Gateway 2.5~2.7ms로, Gateway가 더하는 지연은 1ms 미만입니다. 이벤트별 lag도 p95 1~5ms라서 단일 스트림 지연은 차이가 없다고 봐도 됩니다.</p>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">T05</span>30초 이상 스트림 (토큰 160개, 약 33초)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구성</th><th>결과</th></tr></thead>
+          <tbody>
+            <tr><td>Backend 직접, MVC 기본(read-timeout 없음), WebFlux(response-timeout 10초)</td><td class="hl-good">정상</td></tr>
+            <tr><td>MVC + JDK + <code>read-timeout=10s</code></td><td class="hl-bad">10초(47개)에서 끊김</td></tr>
+            <tr><td>MVC + Jetty, read-timeout 미설정</td><td class="hl-bad">10초에서 끊김</td></tr>
+            <tr><td>MVC + Jetty + <code>read-timeout=10m</code></td><td class="hl-good">정상</td></tr>
+            <tr><td>MVC tuned</td><td class="hl-good">정상 (32.9초)</td></tr>
+            <tr><td>MVC + <code>factory=simple</code> + <code>read-timeout=10s</code></td><td class="hl-good">정상 (이벤트 사이 대기에만 적용)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Spring 6.2.11의 <code>JdkClientHttpRequest</code>는 read-timeout이 지나면 응답 본문을 닫고, <code>JettyClientHttpRequestFactory</code>는 기본 10초를 Jetty의 요청 전체 timeout으로 씁니다. 둘 다 소스에서 확인했습니다.</p>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">타임아웃</span>연결 타임아웃과 응답 타임아웃</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>상황</th><th>MVC 기본</th><th>MVC tuned</th><th>WebFlux</th></tr></thead>
+          <tbody>
+            <tr><td>Backend 연결 불가 (connect-timeout 2초)</td><td class="num">500, 2.15초</td><td class="num">500, 2.02~2.16초</td><td class="num">500, 2.28초</td></tr>
+            <tr><td>첫 토큰이 12초 뒤에 나옴</td><td class="num">200, 12.08초</td><td class="num">200, 12.02초</td><td class="num hl-bad">504, 10.07초</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Backend는 첫 이벤트를 쓸 때 응답 헤더를 함께 보내므로, WebFlux의 response-timeout은 사실상 첫 토큰 대기 제한입니다. 첫 토큰이 늦는 모델이라면 값을 늘리거나 Backend가 헤더를 먼저 flush해야 합니다.</p>
+    </div>
+
+    <div class="scenario" id="t06">
+      <h3><span class="id">T06</span>클라이언트 중단 → Backend 취소</h3>
+      <p>사용자가 답변 도중 "중단"을 누르거나 탭을 닫았을 때 <strong>Backend(LLM)가 토큰 생성을 언제 멈추는지</strong>를 쟀습니다.</p>
+      <ol class="steps">
+        <li><div>클라이언트가 토큰 50개 × 200ms 간격(약 10초) 스트림을 요청합니다.</div></li>
+        <li><div>토큰 3개를 받은 순간 연결을 끊고 그 시각을 <code>abortedAt</code>으로 기록합니다.</div></li>
+        <li><div>Backend는 스트림이 끝난 시각 <code>finishedAt</code>과 끝난 이유를 기록합니다. <code>CANCELLED</code>는 중간에 취소됨, <code>COMPLETED</code>는 50개를 끝까지 만들고 정상 종료됨입니다.</div></li>
+        <li><div><strong>전파 시간 = <code>finishedAt − abortedAt</code></strong>. 클라이언트와 Backend가 같은 머신이라 시계가 같습니다.</div></li>
+        <li><div><strong>중단 후 생성된 토큰 = Backend가 생성한 토큰 수 − 3</strong>. 사용자가 받지 않을 토큰을 몇 개 더 만들었는지입니다.</div></li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구성</th><th>Backend 결과</th><th>전파 (ms)</th><th>중단 후 생성된 토큰</th></tr></thead>
+          <tbody>
+            <tr><td>Backend 직접</td><td>취소됨 5/5</td><td class="num">0 / 1</td><td class="num">0</td></tr>
+            <tr><td>MVC 기본 (JDK)</td><td class="hl-bad">끝까지 완료 5/5</td><td class="num hl-bad">전파 안 됨</td><td class="num hl-bad">47 (전부)</td></tr>
+            <tr><td>MVC + simple 클라이언트</td><td class="hl-bad">끝까지 완료 2/2</td><td class="num hl-bad">전파 안 됨</td><td class="num">47</td></tr>
+            <tr><td>MVC + Jetty</td><td>취소됨 5/5</td><td class="num">412 / 419</td><td class="num">2</td></tr>
+            <tr><td>MVC tuned</td><td>취소됨 3/3</td><td class="num">204 / 410</td><td class="num">1~2</td></tr>
+            <tr><td>WebFlux</td><td>취소됨 5/5</td><td class="num">1 / 4</td><td class="num">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="caption">값이 두 개면 p50 / p95이고, 단위가 ms라서 0은 1ms 미만입니다. MVC 기본과 simple은 각각 abort 후 약 9,750ms, 9,580ms에 정상 종료했는데, 이는 취소 시간이 아니라 남은 47개를 다 만든 시간입니다.</p>
+
+      <h3>Backend 직접, WebFlux: 즉시 취소</h3>
+      <p>Netty는 이벤트 루프가 연결된 소켓을 계속 지켜봅니다. 클라이언트가 연결을 닫으면 바로 알아채고 스트림 구독을 취소합니다. WebFlux Gateway는 이때 Backend로 가는 연결도 즉시 닫고, Backend가 그것을 보고 취소합니다. 소켓 이벤트만으로 처리되므로 다음 토큰을 기다리지 않습니다.</p>
+
+      <h3>MVC 기본: 취소되지 않음</h3>
+      <pre class="cmd">while (Backend에서 읽기) {      <span class="c">← 대부분의 시간을 여기서 대기</span>
+    클라이언트에 쓰기 + flush
+}</pre>
+      <ol class="steps">
+        <li><div>MVC Gateway는 요청마다 Tomcat 스레드 하나가 위 반복문을 돕니다. 클라이언트가 끊어도 스레드는 Backend 읽기에서 대기 중이라 바로 알 수 없습니다.</div></li>
+        <li><div>다음 토큰이 와서 클라이언트에 쓰려고 할 때 쓰기 실패 예외가 나며 비로소 끊긴 것을 압니다.</div></li>
+        <li><div>반복문을 빠져나오면서 Gateway가 Backend 응답을 <code>close()</code>합니다.</div></li>
+        <li><div>Spring 6.2.11의 <code>JdkClientHttpResponse.close()</code>는 커넥션 재사용을 위해 <strong>남은 본문을 끝까지 읽습니다</strong>(drain). simple, HttpComponents, Reactor 클라이언트도 같습니다.</div></li>
+        <li><div>그래서 Gateway가 Backend 스트림을 마지막까지 읽고, Backend는 클라이언트가 떠난 줄 모르고 정상 완료합니다.</div></li>
+      </ol>
+      <p>결과적으로 사용자가 보지 않을 토큰의 비용이 끝까지 나가고, 그동안 Tomcat 스레드와 Backend 연결이 하나씩 묶입니다. 정상 완료로 끝나므로 Backend 로그와 지표로는 중단을 알 수 없습니다.</p>
+
+      <h3>MVC + Jetty, tuned: 200~400ms 후 취소</h3>
+      <p>Jetty 클라이언트의 <code>close()</code>는 drain하지 않고 바로 닫으므로 Backend가 취소됩니다. 0ms가 아닌 이유는 위 1~2단계 때문입니다. MVC는 다음 토큰을 쓸 때만 단절을 알 수 있습니다. 끊긴 직후의 첫 쓰기는 OS 송신 버퍼에 들어가며 성공할 수 있고, 클라이언트 쪽 OS가 RST로 응답한 뒤 두 번째 쓰기에서 실패합니다. 그래서 토큰 간격(200ms)의 1~2배가 걸리고(p50 204ms = 1간격, p95 410ms = 2간격), 그 사이 Backend가 토큰 1~2개를 더 만듭니다.</p>
+
+      <h3>실무적 의미</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구성</th><th>사용자가 중단하면</th></tr></thead>
+          <tbody>
+            <tr><td>WebFlux</td><td class="wrap">즉시 멈춥니다</td></tr>
+            <tr><td>MVC tuned</td><td class="wrap">토큰 1~2개를 더 만들고 멈춥니다</td></tr>
+            <tr><td>MVC 기본</td><td class="wrap hl-bad">답변을 끝까지 다 만듭니다</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li>LLM 토큰 간격은 보통 수십 ms라서 tuned의 "1~2개 더"는 비용 차이가 거의 없습니다. MVC 유지를 권장한 근거 중 하나입니다.</li>
+        <li>단, MVC의 감지 시간은 <strong>다음 토큰까지의 간격</strong>에 비례합니다. 모델이 첫 토큰 전에 30초 동안 생각하는 중에 사용자가 중단하면, MVC는 최대 30초 뒤에야 알아채고 그동안 Backend는 계속 작업합니다. WebFlux는 이 경우에도 즉시 압니다.</li>
+        <li>MVC 기본 설정을 그대로 운영하는 것은 피해야 합니다.</li>
+      </ul>
+
+      <h3>회귀 테스트와 직접 확인</h3>
+      <p class="note"><code>GatewayMvcJdkClientTest</code>가 현재 동작(drain, 취소 안 됨)을 고정하고, <code>GatewayMvcJettyClientTest</code>와 <code>GatewayWebfluxStreamingTest</code>가 취소 전파를 검증합니다. Spring 업그레이드로 drain 동작이 바뀌면 <code>GatewayMvcJdkClientTest</code>가 실패합니다.</p>
+      <pre class="cmd">node scripts/sse-probe.mjs --target http://localhost:8080 --count 50 --abort-after 3 --repeat 5   <span class="c"># MVC 기본</span>
+node scripts/sse-probe.mjs --target http://localhost:8082 --count 50 --abort-after 3 --repeat 5   <span class="c"># WebFlux</span></pre>
+      <p class="note">출력의 <code>cancel outcomes</code>가 <code>COMPLETED</code>면 전파되지 않은 것이고 <code>CANCELLED</code>면 전파된 것입니다. Backend를 <code>--chat.stream.log-each-event=true</code>로 띄우면 로그로도 보입니다. MVC 기본은 끊은 뒤에도 <code>token emitted … index=3, 4, 5 …</code>가 49까지 찍힌 뒤 <code>stream completed</code>로 끝나고, WebFlux는 끊는 순간 <code>stream cancelled</code>가 찍힙니다.</p>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">T09</span>Backend 오류</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>상황</th><th>Backend 직접</th><th>MVC</th><th>WebFlux</th></tr></thead>
+          <tbody>
+            <tr><td>헤더 전 오류</td><td>500 JSON</td><td>500 JSON 전달</td><td>500 JSON 전달</td></tr>
+            <tr><td>토큰 5개 후 스트림 오류</td><td>연결 비정상 종료</td><td class="hl-bad">정상 종료처럼 닫힘</td><td>연결 비정상 종료</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">T10</span>동시 연결 (TTFE p50 / p95 ms, 2초 스트림)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구성</th><th>10</th><th>100</th><th>500</th></tr></thead>
+          <tbody>
+            <tr><td>Backend 직접</td><td class="num">211 / 221</td><td class="num">226 / 232</td><td class="num">225 / 236</td></tr>
+            <tr><td>MVC 기본</td><td class="num">218 / 233</td><td class="num">230 / 264</td><td class="num hl-bad">2,286 / 4,355</td></tr>
+            <tr><td>MVC + 가상 스레드</td><td class="num">232 / 234</td><td class="num">230 / 238</td><td class="num">297 / 343</td></tr>
+            <tr><td>MVC + Jetty (플랫폼 스레드)</td><td class="num">211 / 212</td><td class="num">226 / 233</td><td class="num hl-bad">2,274 / 4,312</td></tr>
+            <tr><td>MVC tuned</td><td class="num">220 / 223</td><td class="num">228 / 233</td><td class="num">243 / 257</td></tr>
+            <tr><td>WebFlux</td><td class="num">231 / 236</td><td class="num">224 / 231</td><td class="num">252 / 266</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">모든 구성의 성공률은 100%입니다. 500 × 20초 장시간 스트림의 평균 CPU는 WebFlux 28%, MVC tuned 34%, MVC + 가상 스레드 35%였고, 스레드 수는 WebFlux 30개, MVC tuned 94개였습니다.</p>
+      <p class="note">k6(500 VU × 2회)로 교차 검증했을 때 WebFlux와 MVC tuned는 모두 100%였습니다. MVC 기본은 첫 실행에서 77건(7.7%) 연결 실패가 났고 이후 4회는 100%였습니다. 이 실패는 재현되지 않았고 원인도 확인하지 못했습니다.</p>
+    </div>
+
+    <div class="scenario">
+      <h3><span class="id">T12</span>압축과 앞단 프록시</h3>
+      <p>Tomcat과 Reactor Netty의 gzip은 flush마다 sync-flush를 해서 이벤트 단위 전달이 유지됐습니다(lag p95 2~4ms). nginx 1.27은 기본값, <code>proxy_buffering on</code> 강제, gzip 모두에서 이벤트를 받는 대로 넘겼습니다(lag p95 16ms 이하, Docker 네트워크 포함). 버퍼링은 클라이언트가 느릴 때 드러나는데, 이 측정에서는 재현되지 않았습니다.</p>
+      <p class="note">MVC tuned는 나중에 따로 측정했으므로 같은 시점의 tuned 단독 값과 비교해야 합니다. 이때는 서버 4개와 nginx 컨테이너가 동시에 떠 있어서 lag가 전반적으로 높습니다. 모든 경우 1.1초 안에 토큰 5개가 도착하는 점진 전달 검사를 통과했습니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구성 (2차 측정)</th><th>TTFE p50 (ms)</th><th>간격 p50 / p95 (ms)</th><th>lag p50 / p95 (ms)</th></tr></thead>
+          <tbody>
+            <tr><td>MVC tuned 단독 (기준)</td><td class="num">234.6</td><td class="num">204.4 / 208.8</td><td class="num">6 / 15</td></tr>
+            <tr><td>MVC tuned + gzip</td><td class="num">231.9</td><td class="num">205.7 / 217.0</td><td class="num">11 / 17</td></tr>
+            <tr><td>nginx 기본 → MVC tuned</td><td class="num">241.2</td><td class="num">206.5 / 213.3</td><td class="num">11 / 21</td></tr>
+            <tr><td>nginx 버퍼링 강제 → MVC tuned</td><td class="num">241.7</td><td class="num">205.6 / 211.5</td><td class="num">10 / 21</td></tr>
+            <tr><td>nginx gzip → MVC tuned</td><td class="num">250.5</td><td class="num">204.4 / 216.4</td><td class="num">9 / 20</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+      </div>
+    </details>
+  </section>
+
+  <section id="limits" aria-labelledby="lim-h">
+    <h2 id="lim-h">한계와 측정 환경</h2>
+    <ul>
+      <li>클라이언트, Gateway, Backend를 한 머신에서 함께 띄우고 라운드 수를 적게 돌린 측정입니다. 운영 결정 전에 목표 동시 연결 수로 별도 호스트에서 다시 측정해야 합니다.</li>
+      <li>HTTP/1.1 평문만 측정했습니다. HTTP/2와 TLS는 측정하지 않았습니다.</li>
+      <li>Backend는 실제 LLM이 아니라 결정적인 모의 토큰 스트림입니다.</li>
+    </ul>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td>OS / HW</td><td class="wrap">macOS 27.0.1, Apple M1 Pro 10코어, 32 GB</td></tr>
+          <tr><td>JDK / JVM</td><td class="wrap">Microsoft OpenJDK 21.0.12.1, 모든 서버 <code>-Xms512m -Xmx1g</code></td></tr>
+          <tr><td>라이브러리</td><td class="wrap">Spring Framework 6.2.11, Tomcat 10.1.46, Reactor Netty 1.2.10, Jetty client 12.0.27</td></tr>
+          <tr><td>측정 도구</td><td class="wrap"><code>scripts/sse-probe.mjs</code> (Node 24.19.0), k6 1.3.0, nginx 1.27-alpine (둘 다 Docker)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="reproduce" aria-labelledby="rep-h">
+    <h2 id="rep-h">재현</h2>
+    <pre class="cmd"><span class="c"># 빌드 후 서버 실행</span>
+./gradlew bootJar
+java -Xms512m -Xmx1g -jar apps/ai-backend/build/libs/ai-backend-0.0.1-SNAPSHOT.jar --chat.stream.log-each-event=false
+java -Xms512m -Xmx1g -jar apps/gateway-mvc/build/libs/gateway-mvc-0.0.1-SNAPSHOT.jar
+SPRING_PROFILES_ACTIVE=tuned java -Xms512m -Xmx1g -jar apps/gateway-mvc/build/libs/gateway-mvc-0.0.1-SNAPSHOT.jar --server.port=8090
+java -Xms512m -Xmx1g -jar apps/gateway-webflux/build/libs/gateway-webflux-0.0.1-SNAPSHOT.jar
+
+<span class="c"># 측정</span>
+scripts/smoke-test.sh
+node scripts/sse-probe.mjs --target http://localhost:8080 --delay 0 --repeat 30 --warmup 5
+node scripts/sse-probe.mjs --target http://localhost:8080 --count 50 --abort-after 3 --repeat 5
+node scripts/sse-probe.mjs --target http://localhost:8080 --concurrency 500 --warmup 1 --repeat 3
+k6 run -e TARGET=http://localhost:8080 -e VUS=500 scripts/load-test.js</pre>
+  </section>
+
+  <script>
+    function openForHash() {
+      var target = location.hash && document.getElementById(location.hash.slice(1));
+      var details = target && target.closest('details');
+      if (details) { details.open = true; target.scrollIntoView(); }
+    }
+    window.addEventListener('hashchange', openForHash);
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest('a[href^="#"]');
+      if (a && a.getAttribute('href') === location.hash) openForHash();
+    });
+    openForHash();
+  </script>
+  <footer>같은 내용의 Markdown 원본: <a href="results.md">docs/results.md</a></footer>
+</main>
+</body>
+</html>

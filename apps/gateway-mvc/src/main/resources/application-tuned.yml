@@ -1,0 +1,14 @@
+# Gateway MVC settings that fixed the problems measured in docs/results.md:
+#   - Jetty client: closing the response aborts the upstream instead of draining it (cancel propagation, T06)
+#   - read-timeout: the Jetty factory applies it as a TOTAL request timeout (default 10s), so it must cover the
+#     longest stream; backend max-duration is 10m (T05)
+#   - virtual threads: a blocked request thread per stream no longer caps concurrency at server.tomcat.threads.max (T10)
+# Run with: SPRING_PROFILES_ACTIVE=tuned ./gradlew :apps:gateway-mvc:bootRun --args='--server.port=8090'
+spring:
+  threads:
+    virtual:
+      enabled: true
+  http:
+    client:
+      factory: jetty
+      read-timeout: 10m
